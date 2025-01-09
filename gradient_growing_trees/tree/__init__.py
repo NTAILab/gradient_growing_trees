@@ -1,1 +1,1 @@
-from .tree import GradientGrowingTreeRegressor
+from .tree import GradientGrowingTreeRegressor, BatchArbitraryLoss

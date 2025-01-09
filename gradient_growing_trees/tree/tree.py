@@ -1,8 +1,6 @@
 import numpy as np
 from scipy.sparse import issparse
 from sklearn.base import BaseEstimator, RegressorMixin
-from sklearn.tree._utils import _any_isnan_axis0
-from sklearn.utils._param_validation import Interval, StrOptions
 from sklearn.utils.validation import (
     _assert_all_finite_element_wise,
     assert_all_finite,
@@ -10,10 +8,10 @@ from sklearn.utils.validation import (
     check_random_state,
 )
 from numbers import Integral, Real
-from ._criterion import MSE2, GradientCriterion
 from ._tree import DepthFirstTreeBuilder, Tree
 from . import _splitter, _criterion
 from ._splitter import Splitter
+from ._criterion import BatchArbitraryLoss
 
 
 DENSE_SPLITTERS = {"best": _splitter.BestSplitter, "random": _splitter.RandomSplitter}
@@ -40,6 +38,7 @@ class GradientGrowingTreeRegressor(BaseEstimator, RegressorMixin):  #, MultiOutp
         lr=1.0,
         splitter="best",
         criterion="batch_mse",
+        n_update_iterations=1,
         max_depth=None,
         min_samples_split=6,
         min_samples_leaf=3,
@@ -52,6 +51,7 @@ class GradientGrowingTreeRegressor(BaseEstimator, RegressorMixin):  #, MultiOutp
         self.lr = lr
         self.splitter = splitter
         self.criterion = criterion
+        self.n_update_iterations = n_update_iterations
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
         self.min_samples_leaf = min_samples_leaf
@@ -123,12 +123,12 @@ class GradientGrowingTreeRegressor(BaseEstimator, RegressorMixin):  #, MultiOutp
         if isinstance(self.min_samples_leaf, (Integral, np.integer)):
             min_samples_leaf = self.min_samples_leaf
         else:  # float
-            min_samples_leaf = int(ceil(self.min_samples_leaf * n_samples))
+            min_samples_leaf = int(np.ceil(self.min_samples_leaf * n_samples))
 
         if isinstance(self.min_samples_split, Integral):
             min_samples_split = self.min_samples_split
         else:  # float
-            min_samples_split = int(ceil(self.min_samples_split * n_samples))
+            min_samples_split = int(np.ceil(self.min_samples_split * n_samples))
             min_samples_split = max(2, min_samples_split)
 
         min_samples_split = max(min_samples_split, 2 * min_samples_leaf)
@@ -160,9 +160,15 @@ class GradientGrowingTreeRegressor(BaseEstimator, RegressorMixin):  #, MultiOutp
         # Build tree
         if not isinstance(self.criterion, _criterion.Criterion):
             if isinstance(self.criterion, str):
-                criterion = CRITERIONS[self.criterion](self.n_outputs_, n_samples, self.lam_2, self.lr)
+                criterion_cls = CRITERIONS[self.criterion]
+                if 'batch' in self.criterion:
+                    criterion = criterion_cls(self.n_outputs_, n_samples, self.lam_2, self.lr, self.n_update_iterations)
+                else:
+                    criterion = criterion_cls(self.n_outputs_, n_samples, self.lam_2, self.lr)
             elif callable(self.criterion):
-                criterion = _criterion.BatchArbitraryLoss(self.n_outputs_, n_samples, self.lam_2, self.lr)
+                criterion = _criterion.BatchArbitraryLoss(
+                    self.n_outputs_, n_samples, self.lam_2, self.lr, self.n_update_iterations
+                )
                 criterion.set_loss(self.criterion)
             else:
                 raise ValueError(f'Wrong criterion type: {type(self.criterion)!r}')

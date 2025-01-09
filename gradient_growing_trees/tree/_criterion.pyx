@@ -890,9 +890,13 @@ cdef class BatchGradientCriterion(Criterion):
     cdef float64_t[:, :] h_cur       # Hessian diagonal for the node points
 
     # Node value
-    cdef float64_t[::1] current_node_value  # Current node value, calculated at `init`
+    cdef public float64_t[::1] current_node_value  # Current node value, calculated at `init`
 
-    def __cinit__(self, intp_t n_outputs, intp_t n_samples, float64_t lam_2, float64_t lr):
+    # Update steps
+    cdef intp_t n_update_iterations
+
+    def __cinit__(self, intp_t n_outputs, intp_t n_samples, float64_t lam_2, float64_t lr,
+                  intp_t n_update_iterations):
         """Initialize parameters for this criterion.
 
         Parameters
@@ -910,6 +914,7 @@ cdef class BatchGradientCriterion(Criterion):
 
         self.n_outputs = n_outputs
         self.n_samples = n_samples
+        self.n_update_iterations = n_update_iterations
         self.n_node_samples = 0
         self.weighted_n_node_samples = 0.0
         self.weighted_n_left = 0.0
@@ -978,7 +983,6 @@ cdef class BatchGradientCriterion(Criterion):
         memset(&self.g_sum_total[0], 0, self.n_outputs * sizeof(float64_t))
         memset(&self.h_sum_total[0], 0, self.n_outputs * sizeof(float64_t))
 
-
         # Calculating current node value:
         # 1. Set current value = parent value
         # 2. Calculate gradients and hessians
@@ -988,35 +992,38 @@ cdef class BatchGradientCriterion(Criterion):
         cdef uint64_t parent_tree_value_stride = self.parent.tree_value_stride
         cdef float64_t* parent_value_ptr = parent_tree_value + parent_node_id * parent_tree_value_stride
         cdef uint8_t is_root = (parent_node_id >= (<uint64_t> -3))
+        cdef uint8_t need_recalculate_grads = 0
         if not is_root:
             memcpy(&self.current_node_value[0], parent_value_ptr, self.n_outputs * sizeof(float64_t))
         else:
-            memset(&self.current_node_value[0], 0, self.n_outputs * sizeof(float64_t))
+            # memset(&self.current_node_value[0], 0, self.n_outputs * sizeof(float64_t))
+            pass  # current_node_value can be prefilled after criterion construction
 
-        if end - start >= len(sample_indices):
-            # calculate gradients only at the root node
-            # (for the other nodes they are already calculated)
-            self.batch_gradients_hessians(start, end)  # calculate gradients and hessians for the node points
+        need_recalculate_grads = (end - start >= len(sample_indices))
+        for cur_iter in range(self.n_update_iterations):
+            if need_recalculate_grads:
+                self.batch_gradients_hessians(start, end)  # calculate gradients and hessians for the node points
 
-        # Calculate gradients at parent value
-        for p in range(start, end):
-            i = sample_indices[p]
+            # Calculate gradients at parent value
+            for p in range(start, end):
+                i = sample_indices[p]
 
-            if sample_weight is not None:
-                w = sample_weight[i]
+                if sample_weight is not None:
+                    w = sample_weight[i]
 
-            for k in range(self.n_outputs):
-                g_ik = self.g_cur[i, k]
-                h_ik = self.h_cur[i, k]
-                w_g_ik = w * g_ik
-                w_h_ik = w * h_ik
-                self.g_sum_total[k] += w_g_ik
-                self.h_sum_total[k] += w_h_ik
+                for k in range(self.n_outputs):
+                    g_ik = self.g_cur[i, k]
+                    h_ik = self.h_cur[i, k]
+                    w_g_ik = w * g_ik
+                    w_h_ik = w * h_ik
+                    self.g_sum_total[k] += w_g_ik
+                    self.h_sum_total[k] += w_h_ik
 
-            self.weighted_n_node_samples += w
+                self.weighted_n_node_samples += w
 
-        # Update current node value
-        self.update_current_node_value()
+            # Update current node value
+            self.update_current_node_value()
+            need_recalculate_grads = True
 
         # Calculate gradients at current value
         memset(&self.g_sum_total[0], 0, self.n_outputs * sizeof(float64_t))
@@ -1346,6 +1353,4 @@ cdef class BatchArbitraryLoss(BatchGradientCriterion):
         cdef const intp_t[:] sample_indices = self.sample_indices
 
         with gil:
-            # self.loss_fn(start, end, self.y, sample_indices, cur_node_values, g, h)
-            # self.loss_fn(self.y, sample_indices[start:end], cur_node_values, g[start:end, :], h[start:end, :])
             self.loss_fn(self.y, sample_indices[start:end], cur_node_values, g, h)
