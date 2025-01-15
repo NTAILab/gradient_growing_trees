@@ -61,7 +61,7 @@ def custom_loss(ys, sample_ids, cur_value, g_out, h_out):
 
 model = GradientGrowingTreeRegressor(
     # ...
-    criterion='custom_loss',
+    criterion=custom_loss,
 )
 model.fit(X_train, y_train)
 preds_test = model.predict(X_test)  # output dimensionality is the same as `y_train`
