@@ -123,7 +123,8 @@ class TreeNN(RegressorMixin, BaseEstimator, metaclass=ABCMeta):
             )
             eval_y_torch = torch.tensor(eval_y, dtype=torch.float64)
             cumulative_predictions_eval = torch.zeros(
-                (eval_y_torch.shape[0], embedding_size),
+                # number of tree predictions is the same as the number of inputs
+                (eval_X.shape[0], embedding_size),
                 dtype=torch.float64
             )
         else:
@@ -192,10 +193,11 @@ class TreeNN(RegressorMixin, BaseEstimator, metaclass=ABCMeta):
                     sample_ids_torch,
                     cumulative_predictions,
                 )
+                # end of _loss
 
             criterion = BatchArbitraryLoss(
                 y.shape[1] if self.embedding_size is None else self.embedding_size,
-                y.shape[0],
+                y_for_tree.shape[0],  # the shape should match `y_for_tree`
                 self.lam_2,
                 self.lr,
                 self.n_update_iterations
